@@ -1,0 +1,6 @@
+require_relative "clipper2/core"
+require_relative "clipper2/engine"
+require_relative "clipper2/offset"
+require_relative "clipper2/rect_clip"
+require_relative "clipper2/minkowski"
+require_relative "clipper2/triangulation"

@@ -35,7 +35,12 @@ module Clipper2
         end
       end
       result = result.map(&:reverse) if @reverse_solution
-      result = Clipper2.union(result) if result.length > 1 && delta >= 0
+      # Always union the offset rings, even for a single inward offset:
+      # acute corners can fold the ring back on itself (the miter clamp falls
+      # back to the source vertex), and the NON_ZERO union resolves those
+      # self-intersections into a clean ring.
+      closed = @groups.any? { |_, _, end_type| [POLYGON, JOINED].include?(end_type) }
+      result = Clipper2.union(result) if closed && !result.empty?
       solution.replace(result) if solution.respond_to?(:replace)
       result
     end
@@ -59,30 +64,52 @@ module Clipper2
         prev = normals[prev_index]
         cur = normals[index]
         intersection = line_intersection(offset_edges[prev_index][0], offset_edges[prev_index][1], offset_edges[index][0], offset_edges[index][1])
-        convex = Clipper2.cross(path[prev_index], point, path[(index + 1) % path.length]) * dir * delta >= 0
+        # Geometric convexity: CCW polygon → left turn = convex (cross > 0).
+        # CW polygon (dir = -1) flips the sign. We deliberately do NOT factor
+        # `delta` in here — convexity is a property of the polygon, not of the
+        # offset direction. The "do segments separate or overlap" question
+        # (which depends on delta) is decided in append_closed_join below.
+        convex = Clipper2.cross(path[prev_index], point, path[(index + 1) % path.length]) * dir > 0
         append_closed_join(out, point, prev, cur, delta, join_type, intersection, convex, path, index)
       end
       [Clipper2.clean_path(out)]
     end
 
-    def append_closed_join(out, point, n1, n2, delta, join_type, intersection, convex, path, index)
-      if join_type == ROUND && path.length >= 3
-        prev_i = (index - 1) % path.length
-        next_i = (index + 1) % path.length
-        raw = Clipper2.cross(path[prev_i], point, path[next_i])
-        ccw = Clipper2.orientation(path)
-        geom_reflex = ccw ? raw.negative? : raw.positive?
-        if geom_reflex
-          append_round(out, point, n1, n2, delta)
-          return
+    # At a closed-polygon vertex, two offset edges meet. Whether they separate
+    # (gap → fill with arc/miter) or overlap (intersect → trim to a single
+    # bisector point) depends on the **combination** of geometric convexity and
+    # offset direction:
+    #
+    #   convex  + delta > 0  → separate (outward of convex corner)
+    #   convex  + delta < 0  → overlap  (inward of convex corner)
+    #   reflex  + delta > 0  → overlap  (outward of reflex corner)
+    #   reflex  + delta < 0  → separate (inward of reflex corner)
+    #
+    # Round join must emit an arc on the SEPARATE side; on the overlap side it
+    # must collapse to the miter intersection (or the two parallel offset
+    # endpoints when the miter overshoots its limit).
+    def append_closed_join(out, point, n1, n2, delta, join_type, intersection, convex, path, _index)
+      separating = (convex && delta > 0) || (!convex && delta < 0)
+
+      unless separating
+        # Overlap side: the two offset edges intersect at the bisector miter.
+        # That intersection is always the geometrically correct corner here —
+        # for inward offsets at acute convex corners it sits well inside the
+        # polygon (miter ratio = 1/sin(angle/2)), exactly where the offset
+        # boundary should turn. We deliberately skip the miter-limit clamp on
+        # this branch: the limit exists to prevent spikes on the *outward*
+        # (separating) side; on the overlap side replacing the miter with a
+        # bevel between the two parallel offset endpoints would leave both
+        # endpoints outside the source polygon, eating into material.
+        if intersection
+          out << intersection
+        else
+          out << offset_point(point, n1, delta)
+          out << offset_point(point, n2, delta)
         end
+        return
       end
-      if !convex && intersection && Clipper2.distance(point, intersection) <= delta.abs * @miter_limit
-        return out << intersection
-      elsif !convex
-        out << offset_point(point, n1, delta)
-        return out << offset_point(point, n2, delta)
-      end
+
       case join_type
       when ROUND
         append_round(out, point, n1, n2, delta)

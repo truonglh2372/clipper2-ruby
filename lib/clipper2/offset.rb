@@ -47,14 +47,45 @@ module Clipper2
       return [] if path.length < 3 || delta == 0
       dir = Clipper2.orientation(path) ? 1.0 : -1.0
       normals = edge_normals(path, dir)
+      offset_edges = path.each_with_index.map do |point, index|
+        nxt = path[(index + 1) % path.length]
+        normal = normals[index]
+        [offset_point(point, normal, delta), offset_point(nxt, normal, delta)]
+      end
       out = []
       path.length.times do |index|
-        prev = normals[(index - 1) % normals.length]
-        cur = normals[index]
+        prev_index = (index - 1) % path.length
         point = path[index]
-        append_join(out, point, prev, cur, delta, join_type)
+        prev = normals[prev_index]
+        cur = normals[index]
+        intersection = line_intersection(offset_edges[prev_index][0], offset_edges[prev_index][1], offset_edges[index][0], offset_edges[index][1])
+        convex = Clipper2.cross(path[prev_index], point, path[(index + 1) % path.length]) * dir * delta >= 0
+        append_closed_join(out, point, prev, cur, delta, join_type, intersection, convex)
       end
       [Clipper2.clean_path(out)]
+    end
+
+    def append_closed_join(out, point, n1, n2, delta, join_type, intersection, convex)
+      if !convex && intersection && Clipper2.distance(point, intersection) <= delta.abs * @miter_limit
+        return out << intersection
+      elsif !convex
+        out << offset_point(point, n1, delta)
+        return out << offset_point(point, n2, delta)
+      end
+      case join_type
+      when ROUND
+        append_round(out, point, n1, n2, delta)
+      when MITER
+        if intersection && Clipper2.distance(point, intersection) <= delta.abs * @miter_limit
+          out << intersection
+        else
+          out << offset_point(point, n1, delta)
+          out << offset_point(point, n2, delta)
+        end
+      else
+        out << offset_point(point, n1, delta)
+        out << offset_point(point, n2, delta)
+      end
     end
 
     def offset_open(path, delta, join_type, end_type)
@@ -132,8 +163,8 @@ module Clipper2
           out << offset_point(point, n2, delta)
         end
       else
-          out << offset_point(point, n1, delta)
-          out << offset_point(point, n2, delta)
+        out << offset_point(point, n1, delta)
+        out << offset_point(point, n2, delta)
       end
     end
 

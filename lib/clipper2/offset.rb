@@ -104,6 +104,22 @@ module Clipper2
     end
 
     def append_join(out, point, n1, n2, delta, join_type)
+      # Detect whether the two offset segments meeting at this vertex separate
+      # (arc/miter fill needed) or intersect (a single bisector point should
+      # replace the corner). For CCW input the normal cross n1×n2 is positive
+      # at convex vertices; outward (delta > 0) creates a gap there, while
+      # inward (delta < 0) makes them overlap. The reverse holds at reflex
+      # vertices.
+      cross = n1[0] * n2[1] - n1[1] * n2[0]
+      separating = (delta >= 0 ? cross : -cross) > EPSILON
+      unless separating
+        # Inward at convex / outward at reflex → segments overlap. Emit the
+        # miter intersection so we keep a clean single corner point instead of
+        # a 270° arc that swings the wrong way.
+        out << miter_point(point, n1, n2, delta)
+        return
+      end
+
       case join_type
       when ROUND
         append_round(out, point, n1, n2, delta)
@@ -146,14 +162,14 @@ module Clipper2
     end
 
     def append_round(out, point, n1, n2, delta)
+      # Caller (append_join) already filtered out the overlapping case, so
+      # here we always sweep along the *shorter* arc from n1 to n2 — its sign
+      # follows the cross product of the normals.
       a1 = Math.atan2(n1[1], n1[0])
       a2 = Math.atan2(n2[1], n2[0])
-      if delta >= 0
-        a2 += Math::PI * 2 while a2 < a1
-      else
-        a2 -= Math::PI * 2 while a2 > a1
-      end
       sweep = a2 - a1
+      sweep -= Math::PI * 2 while sweep > Math::PI
+      sweep += Math::PI * 2 while sweep <= -Math::PI
       steps = [Math.sqrt(sweep.abs * delta.abs / [@arc_tolerance, 0.01].max).ceil, 1].max
       (0..steps).each do |i|
         angle = a1 + sweep * i / steps

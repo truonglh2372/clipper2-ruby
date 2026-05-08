@@ -60,12 +60,23 @@ module Clipper2
         cur = normals[index]
         intersection = line_intersection(offset_edges[prev_index][0], offset_edges[prev_index][1], offset_edges[index][0], offset_edges[index][1])
         convex = Clipper2.cross(path[prev_index], point, path[(index + 1) % path.length]) * dir * delta >= 0
-        append_closed_join(out, point, prev, cur, delta, join_type, intersection, convex)
+        append_closed_join(out, point, prev, cur, delta, join_type, intersection, convex, path, index)
       end
       [Clipper2.clean_path(out)]
     end
 
-    def append_closed_join(out, point, n1, n2, delta, join_type, intersection, convex)
+    def append_closed_join(out, point, n1, n2, delta, join_type, intersection, convex, path, index)
+      if join_type == ROUND && path.length >= 3
+        prev_i = (index - 1) % path.length
+        next_i = (index + 1) % path.length
+        raw = Clipper2.cross(path[prev_i], point, path[next_i])
+        ccw = Clipper2.orientation(path)
+        geom_reflex = ccw ? raw.negative? : raw.positive?
+        if geom_reflex
+          append_round(out, point, n1, n2, delta)
+          return
+        end
+      end
       if !convex && intersection && Clipper2.distance(point, intersection) <= delta.abs * @miter_limit
         return out << intersection
       elsif !convex

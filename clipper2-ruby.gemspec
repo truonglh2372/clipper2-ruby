@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name = "clipper2-ruby"
-  spec.version = "0.1.0"
+  spec.version = "0.1.1"
   spec.summary = "Pure Ruby port of Clipper2 polygon operations"
   spec.authors = ["Clipper2 Ruby Contributors"]
   spec.files = Dir["lib/**/*.rb"]

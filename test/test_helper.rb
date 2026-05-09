@@ -10,6 +10,10 @@ module Clipper2TestHelpers
     values.each_slice(2).map { |x, y| [x.to_f, y.to_f] }
   end
 
+  def points64(values)
+    values.each_slice(2).map { |x, y| Clipper2.point64(x, y) }
+  end
+
   def square(left, top, right, bottom)
     [[left, top], [right, top], [right, bottom], [left, bottom]]
   end

@@ -57,4 +57,29 @@ class Clipper2Test < Minitest::Test
     assert_equal 2, result.triangles.length
     assert_in_delta 100.0, result.triangles.sum { |tri| Clipper2.area(tri.to_a).abs }, 0.001
   end
+
+  def test_triangulate_paths64_matches_clipper_api
+    pp = [square(0, 0, 10, 10)]
+    status, sol = Clipper2.triangulate_paths64(pp, use_delaunay: true)
+    assert_equal Clipper2::TRIANGULATE_SUCCESS, status
+    assert_equal 2, sol.length
+    assert_equal 3, sol[0].length
+    assert_in_delta 100.0, sol.sum { |tri| Clipper2.area(tri).abs }, 0.001
+  end
+
+  def test_triangulate_paths64_detects_crossing_paths
+    a = [[0, 0], [10, 0], [10, 10], [0, 10]]
+    b = [[5, 5], [15, 5], [15, 15], [5, 15]]
+    status, sol = Clipper2.triangulate_paths64([a, b], use_delaunay: true)
+    assert_equal Clipper2::TRIANGULATE_PATHS_INTERSECT, status
+    assert_empty sol
+  end
+
+  def test_triangulate_paths_d
+    pp = [[[0.0, 0.0], [10.0, 0], [10, 10], [0, 10]]]
+    status, sol = Clipper2.triangulate_paths_d(pp, dec_places: 2, use_delaunay: true)
+    assert_equal Clipper2::TRIANGULATE_SUCCESS, status
+    assert_equal 2, sol.length
+    assert sol[0][0].is_a?(Clipper2::PointD)
+  end
 end

@@ -5,15 +5,19 @@ class UpstreamRectClipTest < Minitest::Test
 
   def test_rect_clip
     rect = Clipper2::Rect64.new(left: 100, top: 100, right: 700, bottom: 500)
-    clip_area = Clipper2.area(rect.as_path).abs
+    clip_area = Clipper2.area(rect.as_path)
     sub = [make_path([100, 100, 700, 100, 700, 500, 100, 500])]
-    assert_in_delta path_area(Clipper2.paths64(sub)).abs, path_area(Clipper2.rect_clip(rect, sub)).abs, 0.001
+    sol = Clipper2.rect_clip(rect, sub)
+    assert_equal path_area(Clipper2.paths64(sub)), path_area(sol)
     sub = [make_path([110, 110, 700, 100, 700, 500, 100, 500])]
-    assert_in_delta path_area(Clipper2.paths64(sub)).abs, path_area(Clipper2.rect_clip(rect, sub)).abs, 0.001
+    sol = Clipper2.rect_clip(rect, sub)
+    assert_equal path_area(Clipper2.paths64(sub)), path_area(sol)
     sub = [make_path([90, 90, 700, 100, 700, 500, 100, 500])]
-    assert_in_delta clip_area, path_area(Clipper2.rect_clip(rect, sub)).abs, 0.001
+    sol = Clipper2.rect_clip(rect, sub)
+    assert_equal clip_area, path_area(sol)
     sub = [make_path([110, 110, 690, 110, 690, 490, 110, 490])]
-    assert_in_delta path_area(Clipper2.paths64(sub)).abs, path_area(Clipper2.rect_clip(rect, sub)).abs, 0.001
+    sol = Clipper2.rect_clip(rect, sub)
+    assert_equal path_area(Clipper2.paths64(sub)), path_area(sol)
     rect = Clipper2::Rect64.new(left: 390, top: 290, right: 410, bottom: 310)
     assert_empty Clipper2.rect_clip(rect, [make_path([410, 290, 500, 290, 500, 310, 410, 310])])
     assert_empty Clipper2.rect_clip(rect, [make_path([430, 290, 470, 330, 390, 330])])

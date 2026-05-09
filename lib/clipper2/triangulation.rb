@@ -1,6 +1,12 @@
 require_relative "core"
+require_relative "triangulation_delaunay"
 
 module Clipper2
+  TRIANGULATE_SUCCESS = :success
+  TRIANGULATE_FAIL = :fail
+  TRIANGULATE_NO_POLYGONS = :no_polygons
+  TRIANGULATE_PATHS_INTERSECT = :paths_intersect
+
   Triangle = Struct.new(:a, :b, :c, keyword_init: true) do
     def to_a
       [a, b, c]
@@ -19,54 +25,55 @@ module Clipper2
 
   module_function
 
+  def triangulate_paths64(pp, use_delaunay: true)
+    paths = paths64(pp)
+    return [TRIANGULATE_NO_POLYGONS, []] if paths.empty? || paths.sum(&:length).zero?
+
+    tri_box = [:pending]
+    sol = TriangulationDelaunay::Engine.new(use_delaunay).execute(paths, tri_box)
+    case tri_box[0]
+    when :success
+      [TRIANGULATE_SUCCESS, sol]
+    when :no_polygons
+      [TRIANGULATE_NO_POLYGONS, []]
+    when :paths_intersect
+      [TRIANGULATE_PATHS_INTERSECT, []]
+    else
+      [TRIANGULATE_FAIL, []]
+    end
+  end
+
+  def triangulate_paths_d(pp, dec_places:, use_delaunay: true)
+    scale =
+      if dec_places <= 0
+        1.0
+      elsif dec_places > 8
+        10.0**8
+      else
+        10.0**dec_places
+      end
+    pp64 = paths64(pp, scale: scale)
+    result, sol64 = triangulate_paths64(pp64, use_delaunay: use_delaunay)
+    return [result, []] if result != TRIANGULATE_SUCCESS
+    [TRIANGULATE_SUCCESS, unscale_paths(sol64, scale)]
+  end
+
   def triangulate(paths)
-    triangles = paths64(paths).flat_map { |path| triangulate_path(path) }
+    status, sol = triangulate_paths64(paths, use_delaunay: true)
+    triangles =
+      if status == TRIANGULATE_SUCCESS
+        sol.map { |t| Triangle.new(a: t[0], b: t[1], c: t[2]) }
+      else
+        []
+      end
     TriangulateResult.new(triangles: triangles)
   end
 
   def triangulate_path(path)
-    polygon = trim_collinear(path)
-    return [] if polygon.length < 3
-    polygon = polygon.reverse unless orientation(polygon)
-    indices = (0...polygon.length).to_a
-    triangles = []
-    guard = 0
-    while indices.length > 3 && guard < polygon.length * polygon.length
-      guard += 1
-      ear_index = indices.each_index.find do |i|
-        prev_i = indices[(i - 1) % indices.length]
-        cur_i = indices[i]
-        next_i = indices[(i + 1) % indices.length]
-        ear?(polygon, indices, prev_i, cur_i, next_i)
-      end
-      break if ear_index.nil?
-      prev_i = indices[(ear_index - 1) % indices.length]
-      cur_i = indices[ear_index]
-      next_i = indices[(ear_index + 1) % indices.length]
-      triangles << Triangle.new(a: polygon[prev_i], b: polygon[cur_i], c: polygon[next_i])
-      indices.delete_at(ear_index)
-    end
-    if indices.length == 3
-      triangles << Triangle.new(a: polygon[indices[0]], b: polygon[indices[1]], c: polygon[indices[2]])
-    end
-    triangles
-  end
-
-  def ear?(polygon, indices, prev_i, cur_i, next_i)
-    a = polygon[prev_i]
-    b = polygon[cur_i]
-    c = polygon[next_i]
-    return false if cross(a, b, c) <= EPSILON
-    indices.none? do |index|
-      next false if index == prev_i || index == cur_i || index == next_i
-      point_in_triangle?(polygon[index], a, b, c)
-    end
-  end
-
-  def point_in_triangle?(p, a, b, c)
-    c1 = cross(a, b, p)
-    c2 = cross(b, c, p)
-    c3 = cross(c, a, p)
-    (c1 >= -EPSILON && c2 >= -EPSILON && c3 >= -EPSILON) || (c1 <= EPSILON && c2 <= EPSILON && c3 <= EPSILON)
+    p64 = paths64([path]).first
+    return [] if !p64 || p64.length < 3
+    status, sol = triangulate_paths64([p64], use_delaunay: true)
+    return nil if status != TRIANGULATE_SUCCESS
+    sol.map { |t| Triangle.new(a: t[0], b: t[1], c: t[2]) }
   end
 end

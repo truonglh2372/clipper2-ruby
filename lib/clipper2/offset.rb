@@ -117,8 +117,27 @@ module Clipper2
         result.reject! { |p| Clipper2.area(p).abs < fl }
       end
 
+      if delta < 0 && result.size > 1 &&
+         @groups.size == 1 && @groups[0][:end_type] == POLYGON &&
+         @groups[0][:paths].size == 1
+        result = drop_spike_rings(result)
+      end
+
       solution.replace(result) if solution.respond_to?(:replace)
       result
+    end
+
+    def drop_spike_rings(result)
+      areas = result.map { |p| Clipper2.area(p) }
+      max_idx = areas.each_with_index.max_by { |a, _| a.abs }[1]
+      ref_sign = areas[max_idx] >= 0 ? 1 : -1
+      kept = []
+      result.each_with_index do |path, i|
+        a = areas[i]
+        sign = a >= 0 ? 1 : -1
+        kept << path if sign == ref_sign
+      end
+      kept
     end
 
     def self.lowest_closed_path_info(paths)

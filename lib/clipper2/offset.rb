@@ -27,8 +27,10 @@ module Clipper2
     end
 
     def execute(delta, solution = nil)
+      closed_subjects = []
       result = @groups.flat_map do |path, join_type, end_type|
         if [POLYGON, JOINED].include?(end_type)
+          closed_subjects << Clipper2.path64(path)
           offset_closed(path, delta, join_type)
         else
           offset_open(path, delta, join_type, end_type)
@@ -39,8 +41,16 @@ module Clipper2
       # acute corners can fold the ring back on itself (the miter clamp falls
       # back to the source vertex), and the NON_ZERO union resolves those
       # self-intersections into a clean ring.
-      closed = @groups.any? { |_, _, end_type| [POLYGON, JOINED].include?(end_type) }
-      result = Clipper2.union(result) if closed && !result.empty?
+      result = Clipper2.union(result) if !closed_subjects.empty? && !result.empty?
+      # For inward offsets on closed polygons the round-fan emitted at acute
+      # cusps spills past the bisector and even outside the source. Intersect
+      # with the source paths so every output vertex sits on the |delta|
+      # circle of a source vertex, never further out — matching how Clipper
+      # v6 (Clipper.js / Aspire) finishes its inward offset.
+      if delta < 0 && !closed_subjects.empty? && !result.empty?
+        clipped = Clipper2.intersect(result, closed_subjects)
+        result = clipped if clipped && !clipped.empty?
+      end
       solution.replace(result) if solution.respond_to?(:replace)
       result
     end
@@ -85,22 +95,27 @@ module Clipper2
     #   reflex  + delta > 0  → overlap  (outward of reflex corner)
     #   reflex  + delta < 0  → separate (inward of reflex corner)
     #
-    # Round join must emit an arc on the SEPARATE side; on the overlap side it
-    # must collapse to the miter intersection (or the two parallel offset
-    # endpoints when the miter overshoots its limit).
-    def append_closed_join(out, point, n1, n2, delta, join_type, intersection, convex, path, _index)
+    # Whether the two offset segments separate (gap → fill with arc/miter)
+    # or overlap (intersect → trim to a single bisector point) depends on
+    # the combination of geometric convexity and offset direction:
+    #
+    #   convex  + delta > 0  → separate (outward of convex corner)
+    #   convex  + delta < 0  → overlap  (inward of convex corner)
+    #   reflex  + delta > 0  → overlap  (outward of reflex corner)
+    #   reflex  + delta < 0  → separate (inward of reflex corner)
+    #
+    # On the SEPARATE side we emit the requested join (round arc, miter, or
+    # bevel). On the OVERLAP side the offset segments cross — round arcs
+    # would loop the wrong way and union can't clean that up — so we emit
+    # the bisector miter intersection regardless of join type. The
+    # post-execute clip-to-source pass in `execute` then trims any miter
+    # spike that pokes outside the source polygon at acute cusps, so the
+    # final ring stays on (or inside) the |delta| boundary just like the
+    # Clipper v6 (Clipper.js / Aspire) reference.
+    def append_closed_join(out, point, n1, n2, delta, join_type, intersection, convex, _path, _index)
       separating = (convex && delta > 0) || (!convex && delta < 0)
 
       unless separating
-        # Overlap side: the two offset edges intersect at the bisector miter.
-        # That intersection is always the geometrically correct corner here —
-        # for inward offsets at acute convex corners it sits well inside the
-        # polygon (miter ratio = 1/sin(angle/2)), exactly where the offset
-        # boundary should turn. We deliberately skip the miter-limit clamp on
-        # this branch: the limit exists to prevent spikes on the *outward*
-        # (separating) side; on the overlap side replacing the miter with a
-        # bevel between the two parallel offset endpoints would leave both
-        # endpoints outside the source polygon, eating into material.
         if intersection
           out << intersection
         else
